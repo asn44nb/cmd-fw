@@ -1,2 +1,0 @@
-scoreboard players set @s ccmd.errcode 1
-tellraw @s [{"text":"[CCMD] ","color":"dark_red"},{"text":"Unknown command: ","color":"red"},{"storage":"customcmd:dispatch","nbt":"command","color":"yellow","interpret":false},{"text":"  - use ","color":"dark_gray"},{"text":"/trigger ccmd.trigger set <id>","color":"gray","hoverEvent":{"action":"show_text","contents":{"text":"Run customcmd:api/list to see registered IDs"}}}]
