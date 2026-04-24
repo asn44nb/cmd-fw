@@ -1,0 +1,1 @@
+tellraw @a[tag=ccmd.admin] [{"text":"[","color":"dark_gray"},{"text":"CustomCMD","color":"aqua","bold":true},{"text":"]","color":"dark_gray"},{"text":" v1.0.0 loaded","color":"gray"},{"text":" | 1.21.3 | pack_format 57","color":"dark_gray"}]
