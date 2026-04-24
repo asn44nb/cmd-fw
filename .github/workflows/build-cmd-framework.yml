@@ -1,0 +1,467 @@
+name: build-cmd-framework
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build ZIP
+        run: |
+          python - <<'PY'
+          import json
+          import zipfile
+          from pathlib import Path
+
+          files = {}
+
+          files["pack.mcmeta"] = json.dumps({
+              "pack": {
+                  "pack_format": 57,
+                  "supported_formats": {"min_inclusive": 57, "max_inclusive": 57},
+                  "description": "§6Custom Command Framework §8v1.0\n§7MC 1.21.2–1.21.3 | cmd_fw"
+              }
+          }, indent=2)
+
+          files["data/minecraft/tags/function/load.json"] = json.dumps({"values": ["cmd_fw:init"]}, indent=2)
+          files["data/minecraft/tags/function/tick.json"] = json.dumps({"values": ["cmd_fw:tick"]}, indent=2)
+
+          files["data/cmd_fw/function/init.mcfunction"] = """\
+          # ================================================================
+          # cmd_fw:init | Custom Command Framework v1.0
+          # Pack Format 57 (MC 1.21.2–1.21.3)
+          # ================================================================
+          # Scoreboard'ları oluştur
+          scoreboard objectives add cmd_fw trigger
+          scoreboard objectives add cmd_fw.perm dummy
+          scoreboard objectives add cmd_fw.cooldown dummy
+          scoreboard objectives add cmd_fw.temp dummy
+
+          # Storage'ı sıfırla
+          data modify storage cmd_fw:engine handlers set value {}
+          data modify storage cmd_fw:engine help_lines set value []
+          data modify storage cmd_fw:engine version set value "1.0.0"
+
+          # Tüm oyuncular için trigger'ı etkinleştir
+          scoreboard players enable @a cmd_fw
+
+          # Built-in komutları kaydet
+          function cmd_fw:api/register {name:"help",description:"Tüm komutları listeler",permission:0,handler:"cmd_fw:builtin/help"}
+          function cmd_fw:api/register {name:"version",description:"Framework sürümünü gösterir",permission:0,handler:"cmd_fw:builtin/version"}
+          function cmd_fw:api/register {name:"setperm",description:"Oyuncu iznini ayarlar [OP]",permission:4,handler:"cmd_fw:builtin/setperm"}
+          function cmd_fw:api/register {name:"getperm",description:"Kendi izin seviyeni gösterir",permission:0,handler:"cmd_fw:builtin/getperm"}
+          function cmd_fw:api/register {name:"givebook",description:"Komut kitabı verir",permission:0,handler:"cmd_fw:api/give_book"}
+
+          tellraw @a[tag=cmd_fw.debug] {"text":"[CMD_FW] Framework başlatıldı (v1.0.0)","color":"green"}
+          """
+
+          files["data/cmd_fw/function/tick.mcfunction"] = """\
+          # cmd_fw:tick | Her tick: trigger tespiti + cooldown
+          scoreboard players enable @a cmd_fw
+          execute as @a[scores={cmd_fw=1..}] at @s run function cmd_fw:core/scan
+          scoreboard players reset @a[scores={cmd_fw=1..}] cmd_fw
+          execute as @a[scores={cmd_fw.cooldown=1..}] run scoreboard players remove @s cmd_fw.cooldown 1
+          """
+
+          files["data/cmd_fw/function/core/scan.mcfunction"] = """\
+          # cmd_fw:core/scan | Trigger aktifleyen oyuncu bağlamında çalışır
+
+          # Cooldown kontrolü
+          execute if score @s cmd_fw.cooldown matches 1.. run tellraw @s {"text":"[CMD_FW] Lütfen biraz bekleyin...","color":"yellow"}
+          execute if score @s cmd_fw.cooldown matches 1.. run return 0
+
+          # Ana elde Writable Book kontrolü
+          execute unless data entity @s SelectedItem{id:"minecraft:writable_book"} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Ana eline bir ","color":"yellow"},{"text":"Writable Book","color":"white","bold":true},{"text":" almalısın!","color":"yellow"},{"text":" (Yok mu? → kitabı=givebook, /trigger cmd_fw)","color":"dark_gray"}]
+          execute unless data entity @s SelectedItem{id:"minecraft:writable_book"} run return 0
+
+          # Sayfa 1 var mı?
+          execute unless data entity @s SelectedItem.components."minecraft:writable_book_content".pages[0] run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Kitabın 1. sayfasına komut adını yaz!","color":"yellow"}]
+          execute unless data entity @s SelectedItem.components."minecraft:writable_book_content".pages[0] run return 0
+
+          # Giriş oku
+          function cmd_fw:core/read_input
+
+          # Cooldown: 20 tick (1 saniye)
+          scoreboard players set @s cmd_fw.cooldown 20
+          """
+
+          files["data/cmd_fw/function/core/read_input.mcfunction"] = """\
+          # cmd_fw:core/read_input | Kitap sayfalarını storage'a aktarır
+
+          # Önceki state'i temizle
+          data modify storage cmd_fw:engine current set value {args:[]}
+
+          # Komut adı – Sayfa 1
+          data modify storage cmd_fw:engine current.name set from entity @s SelectedItem.components."minecraft:writable_book_content".pages[0].raw
+
+          # Boş sayfa kontrolü
+          execute unless data storage cmd_fw:engine current.name run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"1. sayfa boş veya okunamadı!","color":"yellow"}]
+          execute unless data storage cmd_fw:engine current.name run return 0
+
+          # Argüman 1 – Sayfa 2
+          execute if data entity @s SelectedItem.components."minecraft:writable_book_content".pages[1] run data modify storage cmd_fw:engine current.args append from entity @s SelectedItem.components."minecraft:writable_book_content".pages[1].raw
+
+          # Argüman 2 – Sayfa 3
+          execute if data entity @s SelectedItem.components."minecraft:writable_book_content".pages[2] run data modify storage cmd_fw:engine current.args append from entity @s SelectedItem.components."minecraft:writable_book_content".pages[2].raw
+
+          # Argüman 3 – Sayfa 4
+          execute if data entity @s SelectedItem.components."minecraft:writable_book_content".pages[3] run data modify storage cmd_fw:engine current.args append from entity @s SelectedItem.components."minecraft:writable_book_content".pages[3].raw
+
+          # Dispatch'e yönlendir
+          function cmd_fw:core/dispatch
+          """
+
+          files["data/cmd_fw/function/core/dispatch.mcfunction"] = """\
+          # cmd_fw:core/dispatch | Komut adını handler'a iletir
+          function cmd_fw:core/dispatch_lookup with storage cmd_fw:engine current
+          """
+
+          files["data/cmd_fw/function/core/dispatch_lookup.mcfunction"] = """\
+          # MACRO  cmd_fw:core/dispatch_lookup
+          # Params: name
+          $execute if data storage cmd_fw:engine {handlers:{$(name):{}}} run function cmd_fw:core/load_handler {cmd:"$(name)"}
+          $execute unless data storage cmd_fw:engine {handlers:{$(name):{}}} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Bilinmeyen komut: "},{"text":"'$(name)'","color":"yellow"},{"text":" – Yardım için kitabı=help, /trigger cmd_fw","color":"dark_gray"}]
+          """
+
+          files["data/cmd_fw/function/core/load_handler.mcfunction"] = """\
+          # MACRO  cmd_fw:core/load_handler
+          # Params: cmd
+          $data modify storage cmd_fw:engine current.handler set from storage cmd_fw:engine handlers.$(cmd).handler
+          $data modify storage cmd_fw:engine current.perm_required set from storage cmd_fw:engine handlers.$(cmd).permission
+          function cmd_fw:core/auth
+          """
+
+          files["data/cmd_fw/function/core/auth.mcfunction"] = """\
+          # cmd_fw:core/auth | İzin seviyesi doğrulaması
+
+          # Gerekli izni skora yükle (varsayılan 0)
+          scoreboard players set #perm_req cmd_fw.temp 0
+          execute store result score #perm_req cmd_fw.temp run data get storage cmd_fw:engine current.perm_required
+
+          # İzin yeterli → handler'ı çağır
+          execute if score @s cmd_fw.perm >= #perm_req cmd_fw.temp run function cmd_fw:core/call_handler with storage cmd_fw:engine current
+
+          # İzin yetersiz → hata mesajı
+          execute unless score @s cmd_fw.perm >= #perm_req cmd_fw.temp run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Bu komutu çalıştırmak için izin seviyesi ","color":"yellow"},{"score":{"name":"#perm_req","objective":"cmd_fw.temp"},"color":"white"},{"text":" gerekiyor. Senin seviyein: ","color":"yellow"},{"score":{"name":"@s","objective":"cmd_fw.perm"},"color":"white"}]
+          """
+
+          files["data/cmd_fw/function/core/call_handler.mcfunction"] = """\
+          # MACRO  cmd_fw:core/call_handler
+          # Params: handler
+          $function $(handler)
+          """
+
+          files["data/cmd_fw/function/api/register.mcfunction"] = """\
+          # MACRO  cmd_fw:api/register
+          # Params: name, description, permission, handler
+          #
+          # Kullanım:
+          #   function cmd_fw:api/register {name:"komut",description:"Açıklama",permission:0,handler:"namespace:path"}
+          #
+          # permission seviyeleri:
+          #   0 = Herkes   1 = Mod   2 = Admin   3 = Sr.Admin   4 = Sahip (OP)
+          $data modify storage cmd_fw:engine handlers.$(name) set value {permission:$(permission),handler:"$(handler)",description:"$(description)"}
+          $data modify storage cmd_fw:engine help_lines append value {name:"$(name)",description:"$(description)",permission:$(permission)}
+          $tellraw @a[tag=cmd_fw.debug] [{"text":"[CMD_FW] Kayıt: ","color":"green"},{"text":"$(name)","color":"yellow"},{"text":" → ","color":"gray"},{"text":"$(handler)","color":"aqua"},{"text":" (perm:$(permission))","color":"dark_gray"}]
+          """
+
+          files["data/cmd_fw/function/api/respond.mcfunction"] = """\
+          # MACRO  cmd_fw:api/respond
+          # Params: msg
+          $tellraw @s [{"text":"[✔] ","color":"aqua","bold":true},{"text":"$(msg)","color":"white"}]
+          """
+
+          files["data/cmd_fw/function/api/respond_error.mcfunction"] = """\
+          # MACRO  cmd_fw:api/respond_error
+          # Params: msg
+          $tellraw @s [{"text":"[✘] ","color":"red","bold":true},{"text":"$(msg)","color":"yellow"}]
+          """
+
+          files["data/cmd_fw/function/api/respond_info.mcfunction"] = """\
+          # MACRO  cmd_fw:api/respond_info
+          # Params: msg
+          $tellraw @s [{"text":"[i] ","color":"gray","bold":true},{"text":"$(msg)","color":"gray"}]
+          """
+
+          files["data/cmd_fw/function/api/run_cmd.mcfunction"] = """\
+          # MACRO  cmd_fw:api/run_cmd
+          # Params: cmd
+          $$(cmd)
+          """
+
+          files["data/cmd_fw/function/api/get_arg.mcfunction"] = """\
+          # MACRO  cmd_fw:api/get_arg
+          # Params: index, dest_ns, dest_path
+          $data modify storage $(dest_ns) $(dest_path) set from storage cmd_fw:engine current.args[$(index)]
+          """
+
+          files["data/cmd_fw/function/api/has_arg.mcfunction"] = """\
+          # MACRO  cmd_fw:api/has_arg
+          # Params: index
+          $execute if data storage cmd_fw:engine current.args[$(index)] run return 1
+          return 0
+          """
+
+          files["data/cmd_fw/function/api/arg_count.mcfunction"] = """\
+          # cmd_fw:api/arg_count
+          # Argüman sayısını #arg_count cmd_fw.temp skoruna yazar
+          scoreboard players set #arg_count cmd_fw.temp 0
+          execute if data storage cmd_fw:engine current.args[0] run scoreboard players set #arg_count cmd_fw.temp 1
+          execute if data storage cmd_fw:engine current.args[1] run scoreboard players set #arg_count cmd_fw.temp 2
+          execute if data storage cmd_fw:engine current.args[2] run scoreboard players set #arg_count cmd_fw.temp 3
+          """
+
+          files["data/cmd_fw/function/api/set_perm.mcfunction"] = """\
+          # MACRO  cmd_fw:api/set_perm
+          # Params: player, level
+          $scoreboard players set $(player) cmd_fw.perm $(level)
+          $tellraw @a[tag=cmd_fw.debug] [{"text":"[CMD_FW] İzin: ","color":"green"},{"text":"$(player)","color":"yellow"},{"text":" → Seviye $(level)","color":"white"}]
+          """
+
+          files["data/cmd_fw/function/api/give_book.mcfunction"] = """\
+          # cmd_fw:api/give_book | Oyuncuya komut kitabı verir
+          give @s minecraft:writable_book
+          tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua","bold":true},{"text":"Writable Book verildi!\n","color":"white"},{"text":"  Sayfa 1","color":"yellow"},{"text":" = Komut adı\n","color":"gray"},{"text":"  Sayfa 2","color":"yellow"},{"text":" = Argüman 1\n","color":"gray"},{"text":"  Sayfa 3","color":"yellow"},{"text":" = Argüman 2\n","color":"gray"},{"text":"  Sonra kitabı elde al → ","color":"white"},{"text":"/trigger cmd_fw","color":"green","bold":true},{"text":" yaz","color":"white"}]
+          """
+
+          files["data/cmd_fw/function/builtin/help.mcfunction"] = """\
+          # cmd_fw:builtin/help | Kayıtlı komutları listeler
+          tellraw @s ["",{"text":"══════════════════════════════\n","color":"dark_gray"},{"text":" ⚡ Custom Command Framework","color":"gold","bold":true},{"text":" v","color":"gray"},{"nbt":"version","storage":"cmd_fw:engine"},{"text":"\n","color":"gray"},{"text":"══════════════════════════════","color":"dark_gray"}]
+          tellraw @s ["",{"text":" Kullanım: ","color":"gray"},{"text":"Kitap","color":"yellow"},{"text":" → 1.sayfa=komut, 2-4.sayfa=argümanlar → ","color":"gray"},{"text":"/trigger cmd_fw","color":"green","bold":true}]
+          tellraw @s {"text":" ","color":"gray"}
+
+          data modify storage cmd_fw:engine help_iter set from storage cmd_fw:engine help_lines
+          function cmd_fw:builtin/help_loop
+
+          tellraw @s {"text":"══════════════════════════════","color":"dark_gray"}
+          """
+
+          files["data/cmd_fw/function/builtin/help_loop.mcfunction"] = """\
+          # cmd_fw:builtin/help_loop | Rekürsif yardım listesi döngüsü
+          execute if data storage cmd_fw:engine {help_iter:[{}]} run function cmd_fw:builtin/help_item
+          execute if data storage cmd_fw:engine {help_iter:[{}]} run data remove storage cmd_fw:engine help_iter[0]
+          execute if data storage cmd_fw:engine {help_iter:[{}]} run function cmd_fw:builtin/help_loop
+          """
+
+          files["data/cmd_fw/function/builtin/help_item.mcfunction"] = """\
+          # cmd_fw:builtin/help_item | İlk help_iter elemanını gösterir
+          function cmd_fw:builtin/help_display with storage cmd_fw:engine help_iter[0]
+          """
+
+          files["data/cmd_fw/function/builtin/help_display.mcfunction"] = """\
+          # MACRO  cmd_fw:builtin/help_display
+          # Params: name, description, permission
+          $tellraw @s ["",{"text":" ▸ ","color":"gold"},{"text":"$(name)","color":"yellow","bold":true},{"text":"  $(description)","color":"gray"},{"text":"  [izin:$(permission)]","color":"dark_gray"}]
+          """
+
+          files["data/cmd_fw/function/builtin/version.mcfunction"] = """\
+          # cmd_fw:builtin/version | Framework sürüm bilgisi
+          tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua","bold":true},{"text":"Custom Command Framework  v","color":"white"},{"nbt":"version","storage":"cmd_fw:engine","color":"yellow"},{"text":"  |  MC 1.21.2–1.21.3  |  Pack Format 57","color":"dark_gray"}]
+          """
+
+          files["data/cmd_fw/function/builtin/getperm.mcfunction"] = """\
+          # cmd_fw:builtin/getperm | Oyuncunun kendi izin seviyesini gösterir
+          tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua"},{"text":"İzin seviyeniz: ","color":"white"},{"score":{"name":"@s","objective":"cmd_fw.perm"},"color":"yellow","bold":true},{"text":" / 4","color":"gray"}]
+          """
+
+          files["data/cmd_fw/function/builtin/setperm.mcfunction"] = """\
+          # cmd_fw:builtin/setperm | Oyuncu iznini değiştirir (permission:4 gerektirir)
+          # Kitap: sayfa1=setperm  sayfa2=OyuncuAdı  sayfa3=0|1|2|3|4
+
+          execute unless data storage cmd_fw:engine current.args[0] run function cmd_fw:api/respond_error {msg:"Kullanım: sayfa2=OyuncuAdı sayfa3=Seviye(0-4)"}
+          execute unless data storage cmd_fw:engine current.args[0] run return 0
+          execute unless data storage cmd_fw:engine current.args[1] run function cmd_fw:api/respond_error {msg:"Kullanım: sayfa2=OyuncuAdı sayfa3=Seviye(0-4)"}
+          execute unless data storage cmd_fw:engine current.args[1] run return 0
+
+          data modify storage cmd_fw:temp setperm.target set from storage cmd_fw:engine current.args[0]
+          data modify storage cmd_fw:temp setperm.level_raw set from storage cmd_fw:engine current.args[1]
+
+          execute if data storage cmd_fw:temp {setperm:{level_raw:"0"}} run data modify storage cmd_fw:temp setperm.level set value 0
+          execute if data storage cmd_fw:temp {setperm:{level_raw:"1"}} run data modify storage cmd_fw:temp setperm.level set value 1
+          execute if data storage cmd_fw:temp {setperm:{level_raw:"2"}} run data modify storage cmd_fw:temp setperm.level set value 2
+          execute if data storage cmd_fw:temp {setperm:{level_raw:"3"}} run data modify storage cmd_fw:temp setperm.level set value 3
+          execute if data storage cmd_fw:temp {setperm:{level_raw:"4"}} run data modify storage cmd_fw:temp setperm.level set value 4
+
+          execute if data storage cmd_fw:temp setperm.level run function cmd_fw:builtin/setperm_exec with storage cmd_fw:temp setperm
+          execute unless data storage cmd_fw:temp setperm.level run function cmd_fw:api/respond_error {msg:"Geçersiz seviye! 0–4 arasında bir sayı gir."}
+          """
+
+          files["data/cmd_fw/function/builtin/setperm_exec.mcfunction"] = """\
+          # MACRO  cmd_fw:builtin/setperm_exec
+          # Params: target, level
+          $scoreboard players set $(target) cmd_fw.perm $(level)
+          $tellraw @a [{"text":"[CMD_FW] ","color":"aqua"},{"text":"$(target)","color":"yellow","bold":true},{"text":" → izin seviyesi ","color":"white"},{"text":"$(level)","color":"green","bold":true},{"text":" yapıldı.","color":"white"}]
+          """
+
+          files["USAGE.md"] = """\
+          # Custom Command Framework (cmd_fw) — Kullanım Kılavuzu
+          **Pack Format:** 57 | **Minecraft:** 1.21.2 – 1.21.3
+
+          ---
+
+          ## Nasıl Çalışır?
+
+          1. Oyuncu bir **Writable Book** açar.
+          2. **1. Sayfa** → Komut adı (örn. `heal`)
+          3. **2. Sayfa** → Argüman 1 (opsiyonel)
+          4. **3. Sayfa** → Argüman 2 (opsiyonel)
+          5. Kitabı **ana eline alır** ve `/trigger cmd_fw` yazar.
+
+          Framework kitabı okur, yetki kontrolü yapar ve ilgili handler fonksiyonunu çağırır.
+
+          ---
+
+          ## Başka Datapack'ten Komut Kaydetme
+
+          ### 1. load fonksiyonunda kayıt
+          ```mcfunction
+          # mypk:init — (minecraft:load tag'ına eklenmiş olmalı)
+          function cmd_fw:api/register {name:"heal",description:"Kendini iyileştirir",permission:0,handler:"mypk:commands/heal"}
+          function cmd_fw:api/register {name:"tp",description:"Teleport [OP]",permission:2,handler:"mypk:commands/tp"}
+          ```
+
+          ### 2. Handler fonksiyonu yaz
+          ```mcfunction
+          # mypk:commands/heal
+          # @s = komutu yazan oyuncu
+          effect give @s minecraft:instant_health 1 5 true
+          function cmd_fw:api/respond {msg:"İyileştirildin!"}
+          ```
+
+          ### 3. Argümanları kullanma
+          ```mcfunction
+          # mypk:commands/greet
+          # Sayfa 2'den arg0'ı al
+          function cmd_fw:api/has_arg {index:0}
+          execute if function mypk:commands/greet_check run function cmd_fw:api/get_arg {index:0,dest_ns:"mypk:data",dest_path:"greet.target"}
+          function mypk:commands/greet_send with storage mypk:data greet
+
+          # greet_send.mcfunction (MACRO - Params: target)
+          # $tellraw @a [{"text":"Merhaba "},{"text":"$(target)","color":"yellow"},{"text":"!"}]
+
+          ### 4. Bir komutu metin olarak çalıştırma
+          # cmd_fw:api/run_cmd macro'su, güvenilir bir komut dizesini çalıştırır.
+          function cmd_fw:api/run_cmd {cmd:"tellraw @s {\"text\":\"Selam!\"}"}
+          ```
+
+          ---
+
+          ## İzin Seviyeleri
+
+          | Seviye | Anlam       | Varsayılan      |
+          |--------|-------------|-----------------|
+          | 0      | Herkes      | Tüm oyuncular   |
+          | 1      | Moderatör   | Manuel atanır   |
+          | 2      | Admin       | Manuel atanır   |
+          | 3      | Sr. Admin   | Manuel atanır   |
+          | 4      | Sahip / OP  | Manuel atanır   |
+
+          İzin atamak: `/trigger cmd_fw` (kitapta: `setperm` / `OyuncuAdı` / `2`)
+
+          Veya direkt: `scoreboard players set <oyuncu> cmd_fw.perm <seviye>`
+
+          ---
+
+          ## API Fonksiyonları
+
+          | Fonksiyon                   | Açıklama                              |
+          |-----------------------------|---------------------------------------|
+          | `cmd_fw:api/register`       | Komut kaydet (MACRO)                  |
+          | `cmd_fw:api/respond`        | Başarı mesajı gönder (MACRO)          |
+          | `cmd_fw:api/respond_error`  | Hata mesajı gönder (MACRO)            |
+          | `cmd_fw:api/respond_info`   | Bilgi mesajı gönder (MACRO)           |
+          | `cmd_fw:api/run_cmd`        | Verilen komutu çalıştır (MACRO)       |
+          | `cmd_fw:api/get_arg`        | Argümanı storage'a al (MACRO)         |
+          | `cmd_fw:api/has_arg`        | Argüman var mı? return 1/0 (MACRO)    |
+          | `cmd_fw:api/arg_count`      | Argüman sayısını skora yaz            |
+          | `cmd_fw:api/set_perm`       | Oyuncu iznini ayarla (MACRO)          |
+          | `cmd_fw:api/give_book`      | Komut kitabı ver                      |
+
+          ---
+
+          ## Built-in Komutlar
+
+          | Komut       | Açıklama                | Gerekli İzin |
+          |-------------|-------------------------|--------------|
+          | `help`      | Tüm komutları listeler  | 0            |
+          | `version`   | Framework sürümü        | 0            |
+          | `getperm`   | Kendi izin seviyeni gör | 0            |
+          | `setperm`   | Oyuncu izni ata         | 4            |
+          | `givebook`  | Yeni kitap al           | 0            |
+
+          ---
+
+          ## 1.20.2+ Notları
+
+          - `function` makroları ve `pack overlays` 1.20.2 ile geldi.
+          - Sayı makro argümanları 1.20.2 snapshot hattında sonradan yeniden ayarlandı; bu yüzden makro argümanlarını metin gibi ele almak daha güvenli.
+          - `return` tabanlı akış kontrolü 1.20.2+ datapack akışlarında kullanılabilir.
+
+          ---
+
+          ## Storage Yapısı
+
+          ```
+          cmd_fw:engine
+          ├── version         String   "1.0.0"
+          ├── handlers        Compound {komutAdi: {permission:N, handler:"ns:path", description:"..."}, ...}
+          ├── help_lines      List     [{name:"...", description:"...", permission:N}, ...]
+          ├── current         Compound
+          │   ├── name        String   (şu anki komut adı)
+          │   ├── args        List     [arg0, arg1, arg2]  (String listesi)
+          │   ├── handler     String   (handler fonksiyon yolu)
+          │   └── perm_required Int   (gereken izin seviyesi)
+          └── help_iter       List     (help döngüsü için geçici kopya)
+
+          cmd_fw:temp
+          └── setperm         Compound {target:"...", level_raw:"...", level:N}
+          ```
+
+          ---
+
+          ## Debug Modu
+
+          `tag <oyuncu> add cmd_fw.debug` ile oyuncuya debug tag'ı eklenirse
+          framework tüm kayıt/hata mesajlarını o oyuncuya gönderir.
+
+          ---
+
+          ## Notlar
+
+          - Komut adları küçük harf, boşluksuz olmalı (alfanümerik + `_`)
+          - Handler fonksiyonu `@s` konteksinde çalışır (komutu yazan oyuncu)
+          - Kitap sayfası başına yaklaşık 100 karakter sığar (MC limiti)
+          """
+
+          out_dir = Path("dist")
+          out_dir.mkdir(parents=True, exist_ok=True)
+          zip_path = out_dir / "cmd_framework_v1.0_MC1.21.3.zip"
+
+          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+              for path, content in files.items():
+                  zf.writestr(f"cmd_framework/{path}", content)
+
+          print(f"ZIP oluşturuldu: {zip_path}")
+          print(f"Toplam dosya: {len(files)}")
+          for f in sorted(files):
+              print(f"  {f}")
+          PY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cmd_framework_v1.0_MC1.21.3
+          path: dist/cmd_framework_v1.0_MC1.21.3.zip
