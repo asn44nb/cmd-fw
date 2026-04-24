@@ -20,16 +20,9 @@ Framework kitabı okur, yetki kontrolü yapar ve ilgili handler fonksiyonunu ça
 ### 1. load fonksiyonunda kayıt
 ```mcfunction
 # mypk:init — (minecraft:load tag'ına eklenmiş olmalı)
-function cmd_fw:api/register {name:"heal",description:"Kendini iyileştirir",permission:0,handler:"mypk:commands/heal"}
-function cmd_fw:api/register {name:"tp",description:"Teleport [OP]",permission:2,handler:"mypk:commands/tp"}
-```
-
-### 2. Handler fonksiyonu yaz
-```mcfunction
-# mypk:commands/heal
-# @s = komutu yazan oyuncu
-effect give @s minecraft:instant_health 1 5 true
-function cmd_fw:api/respond {msg:"İyileştirildin!"}
+function cmd_fw:api/register {name:"heal",description:"Kendini iyileştirir",permission:0,handler:"effect give @s minecraft:regeneration 20 3"}
+function cmd_fw:api/register {name:"tp",description:"Teleport [OP]",permission:2,handler:"tp @s @p"}
+function cmd_fw:api/register {name:"example_args",description:"Argümanlar [OP]",permission:2,handler:"function mypk:commands/greet"}
 ```
 
 ### 3. Argümanları kullanma
@@ -94,7 +87,6 @@ Veya direkt: `scoreboard players set <oyuncu> cmd_fw.perm <seviye>`
 
 ```
 cmd_fw:engine
-├── version         String   "1.0.0"
 ├── handlers        Compound {komutAdi: {permission:N, handler:"ns:path", description:"..."}, ...}
 ├── help_lines      List     [{name:"...", description:"...", permission:N}, ...]
 ├── current         Compound
