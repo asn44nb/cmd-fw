@@ -22,18 +22,18 @@ jobs:
       - name: Build ZIP
         run: |
           python - <<'PY'
-          import json
           import zipfile
+          import json
           from pathlib import Path
 
           files = {}
 
           files["pack.mcmeta"] = json.dumps({
-              "pack": {
-                  "pack_format": 57,
-                  "supported_formats": {"min_inclusive": 57, "max_inclusive": 57},
-                  "description": "§6Custom Command Framework §8v1.0\n§7MC 1.21.2–1.21.3 | cmd_fw"
-              }
+            "pack": {
+              "pack_format": 57,
+              "supported_formats": {"min_inclusive": 57, "max_inclusive": 57},
+              "description": "§6Custom Command Framework §8v1.0\n§7MC 1.21.2–1.21.3 | cmd_fw"
+            }
           }, indent=2)
 
           files["data/minecraft/tags/function/load.json"] = json.dumps({"values": ["cmd_fw:init"]}, indent=2)
@@ -41,8 +41,8 @@ jobs:
 
           files["data/cmd_fw/function/init.mcfunction"] = """\
           # ================================================================
-          # cmd_fw:init | Custom Command Framework v1.0
-          # Pack Format 57 (MC 1.21.2–1.21.3)
+          # cmd_fw:init  |  Custom Command Framework v1.0
+          # Pack Format 57  (MC 1.21.2 – 1.21.3)
           # ================================================================
           # Scoreboard'ları oluştur
           scoreboard objectives add cmd_fw trigger
@@ -69,7 +69,7 @@ jobs:
           """
 
           files["data/cmd_fw/function/tick.mcfunction"] = """\
-          # cmd_fw:tick | Her tick: trigger tespiti + cooldown
+          # cmd_fw:tick  |  Her tick: trigger tespiti + cooldown
           scoreboard players enable @a cmd_fw
           execute as @a[scores={cmd_fw=1..}] at @s run function cmd_fw:core/scan
           scoreboard players reset @a[scores={cmd_fw=1..}] cmd_fw
@@ -77,14 +77,14 @@ jobs:
           """
 
           files["data/cmd_fw/function/core/scan.mcfunction"] = """\
-          # cmd_fw:core/scan | Trigger aktifleyen oyuncu bağlamında çalışır
+          # cmd_fw:core/scan  |  Trigger aktifleyen oyuncu bağlamında çalışır
 
           # Cooldown kontrolü
           execute if score @s cmd_fw.cooldown matches 1.. run tellraw @s {"text":"[CMD_FW] Lütfen biraz bekleyin...","color":"yellow"}
           execute if score @s cmd_fw.cooldown matches 1.. run return 0
 
           # Ana elde Writable Book kontrolü
-          execute unless data entity @s SelectedItem{id:"minecraft:writable_book"} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Ana eline bir ","color":"yellow"},{"text":"Writable Book","color":"white","bold":true},{"text":" almalısın!","color":"yellow"},{"text":" (Yok mu? → kitabı=givebook, /trigger cmd_fw)","color":"dark_gray"}]
+          execute unless data entity @s SelectedItem{id:"minecraft:writable_book"} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Ana eline bir ","color":"yellow"},{"text":"Writable Book","color":"white","bold":true},{"text":" almalısın!","color":"yellow"},{"text":"  (Yok mu? → kitabı=givebook, /trigger cmd_fw)","color":"dark_gray"}]
           execute unless data entity @s SelectedItem{id:"minecraft:writable_book"} run return 0
 
           # Sayfa 1 var mı?
@@ -99,7 +99,7 @@ jobs:
           """
 
           files["data/cmd_fw/function/core/read_input.mcfunction"] = """\
-          # cmd_fw:core/read_input | Kitap sayfalarını storage'a aktarır
+          # cmd_fw:core/read_input  |  Kitap sayfalarını storage'a aktarır
 
           # Önceki state'i temizle
           data modify storage cmd_fw:engine current set value {args:[]}
@@ -125,7 +125,7 @@ jobs:
           """
 
           files["data/cmd_fw/function/core/dispatch.mcfunction"] = """\
-          # cmd_fw:core/dispatch | Komut adını handler'a iletir
+          # cmd_fw:core/dispatch  |  Komut adını handler'a iletir
           function cmd_fw:core/dispatch_lookup with storage cmd_fw:engine current
           """
 
@@ -133,7 +133,7 @@ jobs:
           # MACRO  cmd_fw:core/dispatch_lookup
           # Params: name
           $execute if data storage cmd_fw:engine {handlers:{$(name):{}}} run function cmd_fw:core/load_handler {cmd:"$(name)"}
-          $execute unless data storage cmd_fw:engine {handlers:{$(name):{}}} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Bilinmeyen komut: "},{"text":"'$(name)'","color":"yellow"},{"text":" – Yardım için kitabı=help, /trigger cmd_fw","color":"dark_gray"}]
+          $execute unless data storage cmd_fw:engine {handlers:{$(name):{}}} run tellraw @s [{"text":"[CMD_FW] ","color":"red"},{"text":"Bilinmeyen komut: "},{"text":"'$(name)'","color":"yellow"},{"text":"  – Yardım için kitabı=help, /trigger cmd_fw","color":"dark_gray"}]
           """
 
           files["data/cmd_fw/function/core/load_handler.mcfunction"] = """\
@@ -145,7 +145,7 @@ jobs:
           """
 
           files["data/cmd_fw/function/core/auth.mcfunction"] = """\
-          # cmd_fw:core/auth | İzin seviyesi doğrulaması
+          # cmd_fw:core/auth  |  İzin seviyesi doğrulaması
 
           # Gerekli izni skora yükle (varsayılan 0)
           scoreboard players set #perm_req cmd_fw.temp 0
@@ -168,7 +168,7 @@ jobs:
           # MACRO  cmd_fw:api/register
           # Params: name, description, permission, handler
           #
-          # Kullanım:
+          # Kullanım (başka bir datapack'in load fonksiyonundan):
           #   function cmd_fw:api/register {name:"komut",description:"Açıklama",permission:0,handler:"namespace:path"}
           #
           # permission seviyeleri:
@@ -181,6 +181,7 @@ jobs:
           files["data/cmd_fw/function/api/respond.mcfunction"] = """\
           # MACRO  cmd_fw:api/respond
           # Params: msg
+          # Kullanım (handler içinde): function cmd_fw:api/respond {msg:"Merhaba!"}
           $tellraw @s [{"text":"[✔] ","color":"aqua","bold":true},{"text":"$(msg)","color":"white"}]
           """
 
@@ -196,20 +197,19 @@ jobs:
           $tellraw @s [{"text":"[i] ","color":"gray","bold":true},{"text":"$(msg)","color":"gray"}]
           """
 
-          files["data/cmd_fw/function/api/run_cmd.mcfunction"] = """\
-          # MACRO  cmd_fw:api/run_cmd
-          # Params: cmd
-          $$(cmd)
-          """
-
           files["data/cmd_fw/function/api/get_arg.mcfunction"] = """\
           # MACRO  cmd_fw:api/get_arg
-          # Params: index, dest_ns, dest_path
+          # Argümanı hedef storage path'e kopyalar
+          # Params: index (0-tabanlı), dest_ns, dest_path
+          #
+          # Kullanım:
+          #   function cmd_fw:api/get_arg {index:0,dest_ns:"mypk:data",dest_path:"input.player"}
           $data modify storage $(dest_ns) $(dest_path) set from storage cmd_fw:engine current.args[$(index)]
           """
 
           files["data/cmd_fw/function/api/has_arg.mcfunction"] = """\
           # MACRO  cmd_fw:api/has_arg
+          # Belirtilen indexte argüman var mı? 1=var, 0=yok (return value)
           # Params: index
           $execute if data storage cmd_fw:engine current.args[$(index)] run return 1
           return 0
@@ -226,19 +226,20 @@ jobs:
 
           files["data/cmd_fw/function/api/set_perm.mcfunction"] = """\
           # MACRO  cmd_fw:api/set_perm
-          # Params: player, level
+          # Params: player (isim), level (0-4)
+          # Kullanım: function cmd_fw:api/set_perm {player:"Oyuncu",level:2}
           $scoreboard players set $(player) cmd_fw.perm $(level)
           $tellraw @a[tag=cmd_fw.debug] [{"text":"[CMD_FW] İzin: ","color":"green"},{"text":"$(player)","color":"yellow"},{"text":" → Seviye $(level)","color":"white"}]
           """
 
           files["data/cmd_fw/function/api/give_book.mcfunction"] = """\
-          # cmd_fw:api/give_book | Oyuncuya komut kitabı verir
+          # cmd_fw:api/give_book  |  Oyuncuya komut kitabı verir
           give @s minecraft:writable_book
           tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua","bold":true},{"text":"Writable Book verildi!\n","color":"white"},{"text":"  Sayfa 1","color":"yellow"},{"text":" = Komut adı\n","color":"gray"},{"text":"  Sayfa 2","color":"yellow"},{"text":" = Argüman 1\n","color":"gray"},{"text":"  Sayfa 3","color":"yellow"},{"text":" = Argüman 2\n","color":"gray"},{"text":"  Sonra kitabı elde al → ","color":"white"},{"text":"/trigger cmd_fw","color":"green","bold":true},{"text":" yaz","color":"white"}]
           """
 
           files["data/cmd_fw/function/builtin/help.mcfunction"] = """\
-          # cmd_fw:builtin/help | Kayıtlı komutları listeler
+          # cmd_fw:builtin/help  |  Kayıtlı komutları listeler
           tellraw @s ["",{"text":"══════════════════════════════\n","color":"dark_gray"},{"text":" ⚡ Custom Command Framework","color":"gold","bold":true},{"text":" v","color":"gray"},{"nbt":"version","storage":"cmd_fw:engine"},{"text":"\n","color":"gray"},{"text":"══════════════════════════════","color":"dark_gray"}]
           tellraw @s ["",{"text":" Kullanım: ","color":"gray"},{"text":"Kitap","color":"yellow"},{"text":" → 1.sayfa=komut, 2-4.sayfa=argümanlar → ","color":"gray"},{"text":"/trigger cmd_fw","color":"green","bold":true}]
           tellraw @s {"text":" ","color":"gray"}
@@ -250,14 +251,14 @@ jobs:
           """
 
           files["data/cmd_fw/function/builtin/help_loop.mcfunction"] = """\
-          # cmd_fw:builtin/help_loop | Rekürsif yardım listesi döngüsü
+          # cmd_fw:builtin/help_loop  |  Rekürsif yardım listesi döngüsü
           execute if data storage cmd_fw:engine {help_iter:[{}]} run function cmd_fw:builtin/help_item
           execute if data storage cmd_fw:engine {help_iter:[{}]} run data remove storage cmd_fw:engine help_iter[0]
           execute if data storage cmd_fw:engine {help_iter:[{}]} run function cmd_fw:builtin/help_loop
           """
 
           files["data/cmd_fw/function/builtin/help_item.mcfunction"] = """\
-          # cmd_fw:builtin/help_item | İlk help_iter elemanını gösterir
+          # cmd_fw:builtin/help_item  |  İlk help_iter elemanını gösterir
           function cmd_fw:builtin/help_display with storage cmd_fw:engine help_iter[0]
           """
 
@@ -268,17 +269,17 @@ jobs:
           """
 
           files["data/cmd_fw/function/builtin/version.mcfunction"] = """\
-          # cmd_fw:builtin/version | Framework sürüm bilgisi
+          # cmd_fw:builtin/version  |  Framework sürüm bilgisi
           tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua","bold":true},{"text":"Custom Command Framework  v","color":"white"},{"nbt":"version","storage":"cmd_fw:engine","color":"yellow"},{"text":"  |  MC 1.21.2–1.21.3  |  Pack Format 57","color":"dark_gray"}]
           """
 
           files["data/cmd_fw/function/builtin/getperm.mcfunction"] = """\
-          # cmd_fw:builtin/getperm | Oyuncunun kendi izin seviyesini gösterir
+          # cmd_fw:builtin/getperm  |  Oyuncunun kendi izin seviyesini gösterir
           tellraw @s ["",{"text":"[CMD_FW] ","color":"aqua"},{"text":"İzin seviyeniz: ","color":"white"},{"score":{"name":"@s","objective":"cmd_fw.perm"},"color":"yellow","bold":true},{"text":" / 4","color":"gray"}]
           """
 
           files["data/cmd_fw/function/builtin/setperm.mcfunction"] = """\
-          # cmd_fw:builtin/setperm | Oyuncu iznini değiştirir (permission:4 gerektirir)
+          # cmd_fw:builtin/setperm  |  Oyuncu iznini değiştirir (permission:4 gerektirir)
           # Kitap: sayfa1=setperm  sayfa2=OyuncuAdı  sayfa3=0|1|2|3|4
 
           execute unless data storage cmd_fw:engine current.args[0] run function cmd_fw:api/respond_error {msg:"Kullanım: sayfa2=OyuncuAdı sayfa3=Seviye(0-4)"}
@@ -351,10 +352,6 @@ jobs:
 
           # greet_send.mcfunction (MACRO - Params: target)
           # $tellraw @a [{"text":"Merhaba "},{"text":"$(target)","color":"yellow"},{"text":"!"}]
-
-          ### 4. Bir komutu metin olarak çalıştırma
-          # cmd_fw:api/run_cmd macro'su, güvenilir bir komut dizesini çalıştırır.
-          function cmd_fw:api/run_cmd {cmd:"tellraw @s {\"text\":\"Selam!\"}"}
           ```
 
           ---
@@ -383,7 +380,6 @@ jobs:
           | `cmd_fw:api/respond`        | Başarı mesajı gönder (MACRO)          |
           | `cmd_fw:api/respond_error`  | Hata mesajı gönder (MACRO)            |
           | `cmd_fw:api/respond_info`   | Bilgi mesajı gönder (MACRO)           |
-          | `cmd_fw:api/run_cmd`        | Verilen komutu çalıştır (MACRO)       |
           | `cmd_fw:api/get_arg`        | Argümanı storage'a al (MACRO)         |
           | `cmd_fw:api/has_arg`        | Argüman var mı? return 1/0 (MACRO)    |
           | `cmd_fw:api/arg_count`      | Argüman sayısını skora yaz            |
@@ -401,14 +397,6 @@ jobs:
           | `getperm`   | Kendi izin seviyeni gör | 0            |
           | `setperm`   | Oyuncu izni ata         | 4            |
           | `givebook`  | Yeni kitap al           | 0            |
-
-          ---
-
-          ## 1.20.2+ Notları
-
-          - `function` makroları ve `pack overlays` 1.20.2 ile geldi.
-          - Sayı makro argümanları 1.20.2 snapshot hattında sonradan yeniden ayarlandı; bu yüzden makro argümanlarını metin gibi ele almak daha güvenli.
-          - `return` tabanlı akış kontrolü 1.20.2+ datapack akışlarında kullanılabilir.
 
           ---
 
@@ -434,16 +422,16 @@ jobs:
 
           ## Debug Modu
 
-          `tag <oyuncu> add cmd_fw.debug` ile oyuncuya debug tag'ı eklenirse
+          `tag <oyuncu> add cmd_fw.debug` ile oyuncuya debug tag'ı eklenirse  
           framework tüm kayıt/hata mesajlarını o oyuncuya gönderir.
 
           ---
 
           ## Notlar
 
-          - Komut adları küçük harf, boşluksuz olmalı (alfanümerik + `_`)
+          - Komut adları **küçük harf**, **boşluksuz** olmalı (alfanümerik + `_`)
           - Handler fonksiyonu `@s` konteksinde çalışır (komutu yazan oyuncu)
-          - Kitap sayfası başına yaklaşık 100 karakter sığar (MC limiti)
+          - Kitap sayfası başına ~100 karakter sığar (MC limiti)
           """
 
           out_dir = Path("dist")
@@ -461,7 +449,7 @@ jobs:
           PY
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: cmd_framework_v1.0_MC1.21.3
           path: dist/cmd_framework_v1.0_MC1.21.3.zip
