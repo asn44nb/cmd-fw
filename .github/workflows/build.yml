@@ -1,0 +1,827 @@
+name: "\U0001f528 Build CustomCMD Framework"
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: "Commit message"
+        required: false
+        default: "chore: generate CustomCMD Framework v1.0.0"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Generate datapack files"
+        run: |
+          python3 - << 'PYEOF'
+          import os, json, textwrap
+
+          def write(path, content):
+              os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(content)
+
+          # ════════════════════════════════════════════════════════════════════
+          # pack.mcmeta  —  pack_format 57 = 1.21.2 / 1.21.3
+          # ════════════════════════════════════════════════════════════════════
+          write("pack.mcmeta", json.dumps({
+              "pack": {
+                  "pack_format": 57,
+                  "supported_formats": [57, 61],
+                  "description": {
+                      "text": "CustomCMD Framework",
+                      "color": "aqua",
+                      "extra": [
+                          {"text": " v1.0.0", "color": "gray"},
+                          {"text": " | command registry", "color": "dark_gray"}
+                      ]
+                  }
+              }
+          }, indent=2))
+
+          # ════════════════════════════════════════════════════════════════════
+          # Minecraft built-in tags
+          # ════════════════════════════════════════════════════════════════════
+          write("data/minecraft/tags/function/load.json",
+                json.dumps({"values": ["customcmd:load"]}))
+          write("data/minecraft/tags/function/tick.json",
+                json.dumps({"values": ["customcmd:tick"]}))
+
+          # ════════════════════════════════════════════════════════════════════
+          # Hook tags  —  integrator packs add their functions here
+          # ════════════════════════════════════════════════════════════════════
+          for tag in ("on_load", "on_register", "on_dispatch"):
+              write(f"data/customcmd/tags/function/{tag}.json",
+                    json.dumps({"values": []}))
+
+          # ════════════════════════════════════════════════════════════════════
+          # Helper alias
+          # ════════════════════════════════════════════════════════════════════
+          F = "data/customcmd/function"
+
+          # ─────────────────────────────────────────────────────────────────────
+          # load.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/load.mcfunction", """\
+# CustomCMD Framework v1.0.0  |  pack_format 57  (1.21.2 – 1.21.3)
+# FRAMEWORK ONLY — does not function as a standalone datapack.
+# Integrator packs must list this pack as a dependency via LanternLoad.
+#
+# After reloading, integrators re-register their commands through
+# the #customcmd:on_load hook tag.
+scoreboard objectives add ccmd.state dummy "CCMD: Load"
+
+scoreboard players set #ccmd.loaded ccmd.state 0
+function customcmd:core/init
+function customcmd:core/version
+function #customcmd:on_load
+scoreboard players set #ccmd.loaded ccmd.state 1
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # tick.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/tick.mcfunction", """\
+# Per-tick processing — enables trigger input and dispatches pending commands.
+# Overhead is minimal: one selector scan for trigger activation + one for
+# triggered players.  Both selectors are skipped when no players are online.
+
+execute as @a run function customcmd:internal/trigger_enable
+execute as @a[scores={ccmd.trigger=1..}] at @s run function customcmd:internal/trigger_process
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # core/init.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/core/init.mcfunction", """\
+# Core initialisation — creates scoreboards and seeds all storage namespaces.
+# Safe to call multiple times (scoreboard objectives silently no-op if present).
+
+# ── Scoreboards ───────────────────────────────────────────────────────────────
+scoreboard objectives add ccmd.perm dummy "CCMD: Permission Level (0-4)"
+scoreboard objectives add ccmd.calls dummy "CCMD: Lifetime Call Count"
+scoreboard objectives add ccmd.state dummy "CCMD: Internal State"
+scoreboard objectives add ccmd.errcode dummy "CCMD: Last Error Code"
+scoreboard objectives add ccmd.id dummy "CCMD: ID Counter"
+scoreboard objectives add ccmd.trigger trigger "[CCMD] /trigger ccmd.trigger set <id>"
+
+# ── Storage: customcmd:registry ──────────────────────────────────────────────
+#   commands[]  — array of registered command objects
+#   count       — number of registered commands (int)
+data modify storage customcmd:registry commands  set value []
+data modify storage customcmd:registry count     set value 0
+
+# ── Storage: customcmd:config ────────────────────────────────────────────────
+data modify storage customcmd:config version set value "1.0.0"
+data modify storage customcmd:config debug set value 0b
+data modify storage customcmd:config max_history set value 100
+
+# ── Storage: customcmd:dispatch ──────────────────────────────────────────────
+#   Populated by api/dispatch before each call; cleared afterwards.
+data modify storage customcmd:dispatch active set value 0b
+data modify storage customcmd:dispatch command set value ""
+data modify storage customcmd:dispatch args set value {}
+data modify storage customcmd:dispatch caller_name set value ""
+data modify storage customcmd:dispatch handler set value ""
+data modify storage customcmd:dispatch required_perm set value 0
+data modify storage customcmd:dispatch enabled set value 1b
+data modify storage customcmd:dispatch result set value 0b
+
+# ── Storage: customcmd:history ───────────────────────────────────────────────
+data modify storage customcmd:history entries set value []
+data modify storage customcmd:history count set value 0
+
+# ── Fake-player accumulators (# prefix = never selectable as real player) ────
+scoreboard players set #ccmd.count ccmd.id 0
+scoreboard players set #ccmd.found ccmd.state 0
+scoreboard players set #ccmd.req ccmd.state 0
+scoreboard players set #ccmd.hcount ccmd.state 0
+scoreboard players set #ccmd.hmax ccmd.state 0
+scoreboard players set #ccmd.errcode ccmd.errcode 0
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # core/version.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/core/version.mcfunction", """\
+# Prints a load confirmation to all players with the ccmd.admin tag.
+# Grant the tag with:  tag <player> add ccmd.admin
+tellraw @a[tag=ccmd.admin] [{"text":"[","color":"dark_gray"},{"text":"CustomCMD","color":"aqua","bold":true},{"text":"]","color":"dark_gray"},{"text":" v1.0.0 loaded","color":"gray"},{"text":" | 1.21.3 | pack_format 57","color":"dark_gray"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # core/reset.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/core/reset.mcfunction", """\
+# Full framework reset — wipes registry, history, and dispatch state.
+# All registered commands are lost.  Run /reload to re-register them.
+# Requires caller to have the ccmd.admin tag.
+
+execute unless entity @s[tag=ccmd.admin] run return fail
+
+data modify storage customcmd:registry commands set value []
+data modify storage customcmd:registry count set value 0
+data modify storage customcmd:history entries set value []
+data modify storage customcmd:history count  set value 0
+data modify storage customcmd:dispatch active set value 0b
+data modify storage customcmd:dispatch handler set value ""
+data modify storage customcmd:dispatch command set value ""
+data modify storage customcmd:dispatch result set value 0b
+scoreboard players set #ccmd.count   ccmd.id    0
+scoreboard players set #ccmd.found   ccmd.state 0
+scoreboard players set #ccmd.errcode ccmd.errcode 0
+
+tellraw @a[tag=ccmd.admin] [{"text":"[CCMD] ","color":"dark_aqua"},{"text":"Registry cleared.","color":"red"},{"text":"  Run /reload to re-register commands.","color":"dark_gray"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/register.mcfunction  (macro function)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/register.mcfunction", """\
+# Register a command into the CustomCMD registry.
+# Called by integrator packs from their load functions.
+# This is a MACRO FUNCTION — call with named arguments.
+#
+# ┌─ Macro Parameters ──────────────────────────────────────────────┐
+# │  name        string   Command name used for dispatch / trigger   │
+# │  namespace   string   Your pack namespace (e.g. "mypack")        │
+# │  description string   One-line description (<80 chars)           │
+# │  usage       string   Usage hint (e.g. "greet <player>")         │
+# │  permission  int      Minimum permission level  0–4              │
+# │  handler     string   Function path (e.g. "mypack:cmd/greet")    │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# Example call:
+#   function customcmd:api/register {name:"greet",namespace:"mypack",\\
+#     description:"Greet a player",usage:"greet <player>",\\
+#     permission:1,handler:"mypack:commands/greet"}
+#
+# On success, fires #customcmd:on_register and notifies ccmd.admin players.
+#
+# ── Notes ────────────────────────────────────────────────────────────────────
+# • Do not use double-quotes inside description or usage strings.
+# • permission 0 = anyone, 1 = user, 2 = mod, 3 = admin, 4 = owner (bypass).
+# • Duplicate names are allowed (first match wins in dispatch).
+
+# Increment global ID counter
+scoreboard players add #ccmd.count ccmd.id 1
+
+# Append command entry to registry (id=0 placeholder; patched below)
+$data modify storage customcmd:registry commands append value {id:0,name:"$(name)",namespace:"$(namespace)",description:"$(description)",usage:"$(usage)",permission:$(permission),handler:"$(handler)",enabled:1b,aliases:[]}
+
+# Patch the real numeric ID onto the last-appended element
+execute store result storage customcmd:temp reg_id int 1 run scoreboard players get #ccmd.count ccmd.id
+function customcmd:internal/patch_last_id with storage customcmd:temp
+
+# Update denormalised count field
+execute store result storage customcmd:registry count int 1 run scoreboard players get #ccmd.count ccmd.id
+
+# Hook — integrators can listen here for post-registration events
+function #customcmd:on_register
+
+$tellraw @a[tag=ccmd.admin] [{"text":"[CCMD] ","color":"dark_aqua"},{"text":"+ Registered ","color":"gray"},{"text":"$(namespace):$(name)","color":"yellow","hoverEvent":{"action":"show_text","contents":{"text":"Description: $(description)\\nUsage: $(usage)\\nPermission: $(permission)\\nHandler: $(handler)"}}},{"text":"  perm=$(permission)","color":"dark_gray"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/unregister.mcfunction  (macro function)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/unregister.mcfunction", """\
+# Remove a command from the registry by name.
+# Macro arg: name (string)
+# Note: numeric IDs are not reclaimed — gaps are expected and harmless.
+#
+# Example:
+#   function customcmd:api/unregister {name:"greet"}
+
+$data remove storage customcmd:registry commands[{name:"$(name)"}]
+execute store result storage customcmd:registry count int 1 run data get storage customcmd:registry commands
+
+$tellraw @a[tag=ccmd.admin] [{"text":"[CCMD] ","color":"dark_aqua"},{"text":"- Unregistered ","color":"red"},{"text":"$(name)","color":"yellow"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/dispatch.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/dispatch.mcfunction", """\
+# Dispatch a registered command on behalf of @s (the executing player).
+#
+# Caller must populate customcmd:dispatch storage BEFORE calling:
+#   data modify storage customcmd:dispatch command set value "greet"
+#   data modify storage customcmd:dispatch args    set value {target:"Notch"}
+#   execute as <player> run function customcmd:api/dispatch
+#
+# Read @s ccmd.errcode after the call:
+#   0  success
+#   1  unknown command
+#   2  permission denied
+#   3  command disabled
+
+# ── Anti-recursion guard ──────────────────────────────────────────────────────
+execute if data storage customcmd:dispatch {active:1b} run return fail
+
+data modify storage customcmd:dispatch active set value 1b
+
+# ── Store caller entity name ──────────────────────────────────────────────────
+data modify storage customcmd:dispatch caller_name set from entity @s Name
+
+# ── Locate the command in the registry ───────────────────────────────────────
+data modify storage customcmd:temp search_target set from storage customcmd:dispatch command
+data modify storage customcmd:temp search_list set from storage customcmd:registry commands
+scoreboard players set #ccmd.found ccmd.state 0
+data modify storage customcmd:dispatch handler set value ""
+function customcmd:internal/find_loop
+
+# ── Unknown command ───────────────────────────────────────────────────────────
+execute if score #ccmd.found ccmd.state matches 0 run function customcmd:internal/error_unknown
+execute if score #ccmd.found ccmd.state matches 0 run return run data modify storage customcmd:dispatch active set value 0b
+
+# ── Permission check ──────────────────────────────────────────────────────────
+function customcmd:internal/permission_check
+execute if score @s ccmd.errcode matches 2 run return run data modify storage customcmd:dispatch active set value 0b
+
+# ── Disabled check ────────────────────────────────────────────────────────────
+execute if data storage customcmd:dispatch {enabled:0b} run function customcmd:internal/error_disabled
+execute if data storage customcmd:dispatch {enabled:0b} run return run data modify storage customcmd:dispatch active set value 0b
+
+# ── Pre-dispatch hook ─────────────────────────────────────────────────────────
+function #customcmd:on_dispatch
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+function customcmd:internal/log_call
+
+# ── Run registered handler ────────────────────────────────────────────────────
+# Handler path is copied to customcmd:temp so run_handler can read it via macro.
+data modify storage customcmd:temp handler set from storage customcmd:dispatch handler
+function customcmd:internal/run_handler with storage customcmd:temp
+
+# ── Finalise ──────────────────────────────────────────────────────────────────
+data modify storage customcmd:dispatch active set value 0b
+data modify storage customcmd:dispatch result set value 1b
+scoreboard players set @s ccmd.errcode 0
+scoreboard players add @s ccmd.calls 1
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/set_permission.mcfunction  (macro function)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/set_permission.mcfunction", """\
+# Set @s permission level for the CustomCMD system.
+# Must be called AS the target player.
+# Macro arg: level (int 0-4)
+#
+# Levels:
+#   0  Guest      — cannot run any registered command by default
+#   1  User       — standard player commands
+#   2  Moderator
+#   3  Admin
+#   4  Owner      — bypasses all permission checks
+#
+# Example:
+#   execute as <target> run function customcmd:api/set_permission {level:2}
+
+$scoreboard players set @s ccmd.perm $(level)
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/get_permission.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/get_permission.mcfunction", """\
+# Get @s permission level into customcmd:temp.caller_perm (int).
+# The value is also readable directly from the ccmd.perm scoreboard.
+
+execute store result storage customcmd:temp caller_perm int 1 run scoreboard players get @s ccmd.perm
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # api/list.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/api/list.mcfunction", """\
+# List all registered commands to @s.
+# Each entry is clickable (suggest /trigger ccmd.trigger set <id>)
+# and has a hover tooltip with full details.
+
+tellraw @s [{"text":"\\n"},{"text":"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━","color":"dark_aqua"}]
+tellraw @s [{"text":"  "},{"text":"CustomCMD","color":"aqua","bold":true},{"text":" Command Registry","color":"gray"}]
+tellraw @s [{"text":"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━","color":"dark_aqua"}]
+
+data modify storage customcmd:temp list_buf set from storage customcmd:registry commands
+function customcmd:internal/list_loop
+
+tellraw @s [{"text":"  Total: ","color":"dark_gray"},{"storage":"customcmd:registry","nbt":"count","color":"aqua","interpret":false},{"text":" command(s)  |  Your level: ","color":"dark_gray"},{"score":{"name":"@s","objective":"ccmd.perm"},"color":"green"}]
+tellraw @s [{"text":"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━","color":"dark_aqua"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/patch_last_id.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/patch_last_id.mcfunction", """\
+# Patch the auto-assigned numeric ID onto the last element in the registry.
+# Macro arg: reg_id (int)
+$data modify storage customcmd:registry commands[-1].id set value $(reg_id)
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_loop.mcfunction  (regular — iterates by name)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_loop.mcfunction", """\
+# Iterate customcmd:temp.search_list looking for a command whose name matches
+# customcmd:temp.search_target.  Sets #ccmd.found to 1 on match.
+# Stops early once found; otherwise pops the head and recurses.
+
+execute unless data storage customcmd:temp search_list[0] return 0
+
+# Flatten current element's name to a top-level field for the macro check
+data modify storage customcmd:temp current set from storage customcmd:temp search_list[0]
+data modify storage customcmd:temp current_name set from storage customcmd:temp current.name
+
+function customcmd:internal/find_check with storage customcmd:temp
+
+execute if score #ccmd.found ccmd.state matches 1 return 0
+
+data remove storage customcmd:temp search_list[0]
+function customcmd:internal/find_loop
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_check.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_check.mcfunction", """\
+# Macro: check if current element name matches search_target.
+# Trick: substitute current_name into the NBT filter string and test
+# whether customcmd:temp.search_target has that exact value.
+$execute if data storage customcmd:temp {search_target:"$(current_name)"} run function customcmd:internal/find_match
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_match.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_match.mcfunction", """\
+# Copy matched command fields into customcmd:dispatch and signal found.
+data modify storage customcmd:dispatch handler set from storage customcmd:temp current.handler
+data modify storage customcmd:dispatch command set from storage customcmd:temp current.name
+data modify storage customcmd:dispatch required_perm set from storage customcmd:temp current.permission
+data modify storage customcmd:dispatch enabled set from storage customcmd:temp current.enabled
+scoreboard players set #ccmd.found ccmd.state 1
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_id_loop.mcfunction  (regular — iterates by numeric ID)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_id_loop.mcfunction", """\
+# Iterate customcmd:temp.id_search_list looking for a command whose id field
+# matches customcmd:temp.trigger_id (int).  Sets #ccmd.found to 1 on match.
+
+execute unless data storage customcmd:temp id_search_list[0] return 0
+
+data modify storage customcmd:temp id_current set from storage customcmd:temp id_search_list[0]
+
+# Flatten the integer id to a top-level field for the macro comparison
+execute store result storage customcmd:temp id_current_id int 1 run data get storage customcmd:temp id_current.id
+
+function customcmd:internal/find_id_check with storage customcmd:temp
+
+execute if score #ccmd.found ccmd.state matches 1 return 0
+
+data remove storage customcmd:temp id_search_list[0]
+function customcmd:internal/find_id_loop
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_id_check.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_id_check.mcfunction", """\
+# Macro: check if id_current_id matches trigger_id.
+# Both are ints stored in customcmd:temp, compared via NBT filter substitution.
+$execute if data storage customcmd:temp {trigger_id:$(id_current_id)} run function customcmd:internal/find_id_match
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/find_id_match.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/find_id_match.mcfunction", """\
+# Copy matched-by-ID command fields into customcmd:dispatch and signal found.
+data modify storage customcmd:dispatch handler set from storage customcmd:temp id_current.handler
+data modify storage customcmd:dispatch command set from storage customcmd:temp id_current.name
+data modify storage customcmd:dispatch required_perm set from storage customcmd:temp id_current.permission
+data modify storage customcmd:dispatch enabled set from storage customcmd:temp id_current.enabled
+scoreboard players set #ccmd.found ccmd.state 1
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/list_loop.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/list_loop.mcfunction", """\
+# Iterate customcmd:temp.list_buf and print each command as one tellraw line.
+
+execute unless data storage customcmd:temp list_buf[0] return 0
+
+data modify storage customcmd:temp list_current set from storage customcmd:temp list_buf[0]
+function customcmd:internal/list_entry with storage customcmd:temp
+
+data remove storage customcmd:temp list_buf[0]
+function customcmd:internal/list_loop
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/list_entry.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/list_entry.mcfunction", """\
+# Macro: print one command entry line to @s.
+# Hover shows full details; click suggests the trigger command.
+$tellraw @s [{"text":"  "},{"text":"#$(id) ","color":"dark_aqua"},{"text":"$(name)","color":"yellow","hoverEvent":{"action":"show_text","contents":{"text":"Namespace: $(namespace)\\nDescription: $(description)\\nUsage: $(usage)\\nPermission: $(permission)\\nHandler: $(handler)"}},"clickEvent":{"action":"suggest_command","value":"/trigger ccmd.trigger set $(id)"}},{"text":" — $(description)","color":"white"},{"text":"  [perm:$(permission)]","color":"dark_gray"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/permission_check.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/permission_check.mcfunction", """\
+# Compare @s permission level against the required level in dispatch state.
+# Sets @s ccmd.errcode to 2 and calls error_denied if access is denied.
+# Owner (level 4) bypasses all checks unconditionally.
+
+# Initialise permission score if not yet assigned (add 0 = no-op if exists)
+scoreboard players add @s ccmd.perm 0
+
+# Load required permission into a fake-player score for arithmetic comparison
+execute store result score #ccmd.req ccmd.state run data get storage customcmd:dispatch required_perm
+
+# Level-4 bypass
+execute if entity @s[scores={ccmd.perm=4}] return 0
+
+# Deny if player level < required level
+execute if score @s ccmd.perm < #ccmd.req ccmd.state run function customcmd:internal/error_denied
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/run_handler.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/run_handler.mcfunction", """\
+# Macro: dynamically call the registered handler function.
+# Macro arg: handler (string, fully-qualified function path)
+# The handler is executed AS @s (the dispatching player) in its calling context.
+$function $(handler)
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/trigger_enable.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/trigger_enable.mcfunction", """\
+# Enable the ccmd.trigger objective for @s and seed their perm score if absent.
+# Called every tick for all players — very cheap.
+scoreboard players enable @s ccmd.trigger
+scoreboard players add @s ccmd.perm 0
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/trigger_process.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/trigger_process.mcfunction", """\
+# Process a player's /trigger ccmd.trigger set <id> input.
+# Called as @s (the triggering player).
+#
+# The trigger value is the numeric command ID shown in /ccmd list.
+# Players cannot pass arguments via trigger; integrators extend this
+# by reading from books, signs, or other inputs before calling api/dispatch.
+
+# Capture and immediately reset the trigger to prevent repeat-fire
+execute store result storage customcmd:temp trigger_id int 1 run scoreboard players get @s ccmd.trigger
+scoreboard players set @s ccmd.trigger 0
+
+# Store trigger_id as the command name placeholder for error reporting
+data modify storage customcmd:dispatch command set from storage customcmd:temp trigger_id
+
+# Search registry by numeric ID
+data modify storage customcmd:temp id_search_list set from storage customcmd:registry commands
+scoreboard players set #ccmd.found ccmd.state 0
+data modify storage customcmd:dispatch handler set value ""
+function customcmd:internal/find_id_loop
+
+# Not found — show error and stop
+execute if score #ccmd.found ccmd.state matches 0 run return run function customcmd:internal/error_unknown
+
+# Set command name in dispatch for dispatch function to use
+data modify storage customcmd:dispatch command set from storage customcmd:dispatch command
+
+# No explicit args from trigger — integrators may pre-populate dispatch.args
+execute unless data storage customcmd:dispatch args run data modify storage customcmd:dispatch args set value {}
+
+function customcmd:api/dispatch
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # internal/log_call.mcfunction
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/log_call.mcfunction", """\
+# Prepend a structured log entry to customcmd:history.entries (newest first).
+# Trims the list to customcmd:config.max_history entries.
+
+# Build entry from dispatch state
+data modify storage customcmd:temp log_entry set value {command:"",caller:""}
+data modify storage customcmd:temp log_entry.command set from storage customcmd:dispatch command
+data modify storage customcmd:temp log_entry.caller set from storage customcmd:dispatch caller_name
+
+# Prepend
+data modify storage customcmd:history entries prepend from storage customcmd:temp log_entry
+
+# Trim if over max_history
+execute store result score #ccmd.hcount ccmd.state run data get storage customcmd:history entries
+execute store result score #ccmd.hmax ccmd.state run data get storage customcmd:config max_history
+execute if score #ccmd.hcount ccmd.state > #ccmd.hmax ccmd.state run data remove storage customcmd:history entries[-1]
+
+# Update count
+execute store result storage customcmd:history count int 1 run data get storage customcmd:history entries
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # Error functions
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/internal/error_unknown.mcfunction", """\
+# Error 1 — command not found in registry
+scoreboard players set @s ccmd.errcode 1
+tellraw @s [{"text":"[CCMD] ","color":"dark_red"},{"text":"Unknown command: ","color":"red"},{"storage":"customcmd:dispatch","nbt":"command","color":"yellow","interpret":false},{"text":"  — use ","color":"dark_gray"},{"text":"/trigger ccmd.trigger set <id>","color":"gray","hoverEvent":{"action":"show_text","contents":{"text":"Run customcmd:api/list to see registered IDs"}}}]
+""")
+
+          write(f"{F}/internal/error_denied.mcfunction", """\
+# Error 2 — caller lacks sufficient permission
+scoreboard players set @s ccmd.errcode 2
+tellraw @s [{"text":"[CCMD] ","color":"dark_red"},{"text":"Permission denied.  ","color":"red"},{"text":"Required: ","color":"dark_gray"},{"score":{"name":"#ccmd.req","objective":"ccmd.state"},"color":"yellow"},{"text":"  Yours: ","color":"dark_gray"},{"score":{"name":"@s","objective":"ccmd.perm"},"color":"aqua"}]
+""")
+
+          write(f"{F}/internal/error_disabled.mcfunction", """\
+# Error 3 — command exists but is currently disabled
+scoreboard players set @s ccmd.errcode 3
+tellraw @s [{"text":"[CCMD] ","color":"dark_red"},{"text":"That command is currently disabled.","color":"red"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # util/send_message.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/util/send_message.mcfunction", """\
+# Send a prefixed, coloured message to @s.
+# For use by integrator command handlers.
+# Macro args: msg (string), color (string, e.g. "green")
+#
+# Example:
+#   function customcmd:util/send_message {msg:"Hello!",color:"green"}
+
+$tellraw @s [{"text":"[CCMD] ","color":"dark_aqua"},{"text":"$(msg)","color":"$(color)"}]
+""")
+
+          # ─────────────────────────────────────────────────────────────────────
+          # util/send_help.mcfunction  (macro)
+          # ─────────────────────────────────────────────────────────────────────
+          write(f"{F}/util/send_help.mcfunction", """\
+# Display a formatted help card for a specific command.
+# Call from your handler when the player provides no arguments or uses --help.
+# Macro args: name, namespace, description, usage, permission
+#
+# Example:
+#   function customcmd:util/send_help {name:"greet",namespace:"mypack",\\
+#     description:"Greet a player",usage:"greet <player>",permission:1}
+
+$tellraw @s [{"text":"\\n"},{"text":"[CCMD] Help — ","color":"dark_aqua"},{"text":"$(namespace):$(name)","color":"yellow"}]
+$tellraw @s [{"text":"  Description: ","color":"dark_gray"},{"text":"$(description)","color":"white"}]
+$tellraw @s [{"text":"  Usage:       ","color":"dark_gray"},{"text":"$(usage)","color":"aqua"}]
+$tellraw @s [{"text":"  Permission:  ","color":"dark_gray"},{"text":"$(permission)","color":"green"}]
+""")
+
+          # ════════════════════════════════════════════════════════════════════
+          # README.md
+          # ════════════════════════════════════════════════════════════════════
+          write("README.md", """\
+# CustomCMD Framework
+
+> **Pack format 57 — Minecraft 1.21.2 / 1.21.3**
+> Framework only. Does not work standalone.
+
+Advanced command-registration system for Minecraft datapacks.
+Integrator packs register their commands at load-time; the framework handles
+dispatch, permission checking, audit logging, and player-facing output.
+
+---
+
+## Scoreboards
+
+| Objective | Type | Purpose |
+|---|---|---|
+| `ccmd.perm` | dummy | Player permission level (0–4) |
+| `ccmd.calls` | dummy | Lifetime call count per player |
+| `ccmd.errcode` | dummy | Last error code (0 ok · 1 unknown · 2 denied · 3 disabled) |
+| `ccmd.trigger` | trigger | `/trigger ccmd.trigger set <id>` — player input |
+| `ccmd.id` | dummy | Internal ID counter (fake players only) |
+| `ccmd.state` | dummy | Internal scratchpad (fake players only) |
+
+## Storage namespaces
+
+| Storage | Description |
+|---|---|
+| `customcmd:registry` | `commands[]` array + `count` |
+| `customcmd:config` | `version`, `debug`, `max_history` |
+| `customcmd:dispatch` | Active dispatch state (cleared after each call) |
+| `customcmd:history` | Audit log `entries[]` (newest first) |
+| `customcmd:temp` | Internal scratch space |
+
+---
+
+## API
+
+### Register a command
+
+```mcfunction
+function customcmd:api/register {name:"greet",namespace:"mypack",\\
+  description:"Greet a player",usage:"greet <player>",\\
+  permission:1,handler:"mypack:commands/greet"}
+```
+
+Call this from your pack's load function (or from `#customcmd:on_load`).
+
+### Dispatch programmatically
+
+```mcfunction
+data modify storage customcmd:dispatch command set value "greet"
+data modify storage customcmd:dispatch args set value {target:"Notch"}
+execute as <player> run function customcmd:api/dispatch
+```
+
+### Set / get permission
+
+```mcfunction
+execute as <player> run function customcmd:api/set_permission {level:2}
+execute as <player> run function customcmd:api/get_permission
+# result → customcmd:temp.caller_perm
+```
+
+### List all commands
+
+```mcfunction
+execute as <player> run function customcmd:api/list
+```
+
+### Unregister
+
+```mcfunction
+function customcmd:api/unregister {name:"greet"}
+```
+
+---
+
+## Permission levels
+
+| Level | Label | Notes |
+|---|---|---|
+| 0 | Guest | Default; cannot run any command |
+| 1 | User | Basic player commands |
+| 2 | Moderator | |
+| 3 | Admin | |
+| 4 | Owner | Bypasses all permission checks |
+
+Assign with `execute as <player> run function customcmd:api/set_permission {level:N}`.
+Grant `ccmd.admin` tag to receive framework debug output.
+
+---
+
+## Hook tags
+
+Integrator packs append their functions to these tags:
+
+| Tag | Fired when |
+|---|---|
+| `#customcmd:on_load` | Framework finishes loading |
+| `#customcmd:on_register` | A command has been registered |
+| `#customcmd:on_dispatch` | Just before a handler runs |
+
+---
+
+## Player input (trigger)
+
+Players use `/trigger ccmd.trigger set <id>` where `<id>` is the numeric
+command ID shown in `customcmd:api/list`.
+
+Trigger input does **not** support arguments.
+For argument-bearing commands, populate `customcmd:dispatch.args` before
+calling `customcmd:api/dispatch` from your own logic (books, signs, etc.).
+
+---
+
+## Integrator example
+
+```
+# mypack/function/load.mcfunction
+function customcmd:api/register {name:"greet",namespace:"mypack",\\
+  description:"Greet another player",usage:"greet <player>",\\
+  permission:1,handler:"mypack:commands/greet"}
+```
+
+```
+# mypack/function/commands/greet.mcfunction
+# customcmd:dispatch.args is a compound — access your args here
+# customcmd:dispatch.caller_name holds the player's name
+
+data modify storage customcmd:temp greet_msg set value "Hello from CustomCMD!"
+function customcmd:util/send_message {msg:"Hello!",color:"green"}
+```
+
+```json
+// mypack/tags/function/on_load.json
+{ "values": ["mypack:load"] }
+```
+
+---
+
+## Limitations
+
+- Double-quotes inside `description` or `usage` macro strings will break SNBT parsing.
+- Command registry search is O(n); registries over ~200 commands may see
+  slight dispatch latency.
+- `trigger` input does not support text arguments natively.
+
+---
+
+*Generated by `.github/workflows/build.yml` — edit there, not here.*
+""")
+
+          print()
+          print("✓  All datapack files generated.")
+          PYEOF
+
+      - name: "Package datapack (.zip)"
+        run: |
+          zip -r customcmd-framework-v1.0.0.zip \
+              pack.mcmeta \
+              data/ \
+              README.md
+          echo "✓  Zipped → customcmd-framework-v1.0.0.zip"
+          unzip -l customcmd-framework-v1.0.0.zip
+
+      - name: "Commit generated files"
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pack.mcmeta data/ README.md
+          if git diff --cached --quiet; then
+            echo "Nothing changed — skipping commit."
+          else
+            git commit -m "${{ github.event.inputs.commit_message }}"
+            git push
+            echo "✓  Committed and pushed."
+          fi
+
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@v6
+        with:
+          name: customcmd-framework-v1.0.0
+          path: customcmd-framework-v1.0.0.zip
+          retention-days: 30
